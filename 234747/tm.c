@@ -83,10 +83,27 @@
 static struct _segment* free_segment_list = NULL;
 
 /**
+ * Acquire the spin-lock given
+ */
+static void acquire_lock(atomic_uint* lock) {
+    unsigned int prev = 0;
+    while (!atomic_compare_exchange_strong_explicit(lock, &prev, 1u, memory_order_acquire,
+                                                    memory_order_relaxed)) {
+        prev = 0;
+    }
+}
+
+/**
+ * Release the given lock
+ */
+static void release_lock(atomic_uint* lock) {
+    atomic_store_explicit(lock, 0u, memory_order_release);
+}
+
+/**
  * Return the real alignement allocation of the region
  */
 static inline size_t tm_align_alloc(struct _region * r) {
-//    return atomic_load(&(r->align_alloc));
     return r->align_alloc;
 }
 
@@ -95,7 +112,6 @@ static inline size_t tm_align_alloc(struct _region * r) {
  * @return true if it succeeded else false
  */
 static bool fill_segment(struct _region* r, struct _segment* s, size_t size) {
-    //atomic_init(&(s->size), size);
     s->size = size;
     s->ref_count = 0;
     s->removed = false;
@@ -137,7 +153,8 @@ shared_t tm_create(size_t size as(unused), size_t align as(unused)) {
     if (unlikely(!r)) {
         return invalid_shared;
     }
-    atomic_init(&(r->lkd_lock), 0u);
+    atomic_init(&r->segments_lkd_lock, 0u);
+    atomic_init(&r->free_lkd_lock, 0u);
 
     size_t align_alloc = align < sizeof(void*) ? sizeof(void*) : align;
     r->align = align;
@@ -218,10 +235,7 @@ tx_t tm_begin(shared_t shared as(unused), bool is_ro as(unused)) {
     }
 
     // Lock when sync the segments
-    unsigned int prev = 0;
-    while(!atomic_compare_exchange_strong_explicit(&r->lkd_lock, &prev, 1u, memory_order_acquire, memory_order_relaxed)) {
-        prev = 0;
-    }
+    acquire_lock(&r->segments_lkd_lock);
 
     txn->rv = gv_clock;
     txn->read_only = is_ro;
@@ -239,13 +253,13 @@ tx_t tm_begin(shared_t shared as(unused), bool is_ro as(unused)) {
             set->updated_value = calloc(nb_items, sizeof(void *));
             if (unlikely(!set->updated_value)) {
                 free_transaction((tx_t) txn, shared);
-                atomic_store_explicit(&r->lkd_lock, 0u, memory_order_release);
+                release_lock(&r->segments_lkd_lock);
                 return invalid_tx;
             }
             set->was_read = calloc(nb_items, sizeof(bool));
             if (unlikely(!set->was_read)) {
                 free_transaction((tx_t) txn, shared);
-                atomic_store_explicit(&r->lkd_lock, 0u, memory_order_release);
+                release_lock(&r->segments_lkd_lock);
                 return invalid_tx;
             }
             for (size_t item=0; item < nb_items; item++) {
@@ -263,7 +277,7 @@ tx_t tm_begin(shared_t shared as(unused), bool is_ro as(unused)) {
         }
     }
 
-    atomic_store_explicit(&r->lkd_lock, 0u, memory_order_release);
+    release_lock(&r->segments_lkd_lock);
     return (tx_t) txn;
 }
 
@@ -282,22 +296,41 @@ bool tm_end(shared_t shared as(unused), tx_t tx as(unused)) {
         return true;
     }
 
-    unsigned int prev = 0;
-    while(!atomic_compare_exchange_strong_explicit(&r->lkd_lock, &prev, 1u, memory_order_acquire, memory_order_relaxed)) {
-        prev = 0;
+    bool lock_segment_list = false;
+    bool lock_free_list = false;
+    rw_set* current_set = txn->read_write_set;
+    while (current_set != NULL) {
+        if (current_set->segment->is_new && current_set->to_remove == false) {
+            // Only used to add to segment list
+            lock_segment_list = true;
+        } else if (current_set->to_remove && current_set->segment->removed == false) {
+            // Need both lock if we remove from segment list and transfer to free list
+            lock_free_list = true;
+            lock_segment_list = true;
+            break;
+        }
+        current_set = current_set->next;
     }
 
+    if (lock_segment_list)
+        acquire_lock(&r->segments_lkd_lock);
+
+    if (lock_free_list)
+        acquire_lock(&r->free_lkd_lock);
 
     // Validate the transaction
     bool is_valid_transaction = validate_transaction(r, txn);
     if (!is_valid_transaction) {
         free_transaction(tx, shared);
-        atomic_store_explicit(&r->lkd_lock, 0u, memory_order_release);
+        if (lock_segment_list)
+            release_lock(&r->segments_lkd_lock);
+        if (free_segment_list)
+            release_lock(&r->free_lkd_lock);
         return false;
     }
 
     // Write all the updates in shared memory and release the write locks
-    rw_set* current_set = txn->read_write_set;
+    current_set = txn->read_write_set;
     while (current_set != NULL) {
         writes_in_shared_memory(r, txn, current_set);
         if (current_set->segment->is_new && current_set->to_remove == false) {
@@ -320,9 +353,13 @@ bool tm_end(shared_t shared as(unused), tx_t tx as(unused)) {
         current_set = current_set->next;
     }
 
+    if (lock_segment_list)
+        release_lock(&r->segments_lkd_lock);
+    if (free_segment_list)
+        release_lock(&r->free_lkd_lock);
+
     // Free the transaction and decrease ref_counts
     free_transaction(tx, shared);
-    atomic_store_explicit(&r->lkd_lock, 0u, memory_order_release);
     return true;
 }
 
@@ -497,13 +534,9 @@ bool tm_free(shared_t shared as(unused), tx_t tx as(unused), void* target as(unu
     assert(set);
     set->to_remove = true;
     assert(!txn->read_only);
-
     region* r = (region *) shared;
-    unsigned int p = 0;
-    // Best effort to free the 'free list'
-    if(!atomic_compare_exchange_strong_explicit(&r->lkd_lock, &p, 1u, memory_order_acquire, memory_order_relaxed)) {
-        return true;
-    }
+
+    acquire_lock(&r->free_lkd_lock);
 
     // Check the 'to be freed' list of segments and removed the old freed segments with ref_count == 0
     segment* prev = NULL;
@@ -534,6 +567,6 @@ bool tm_free(shared_t shared as(unused), tx_t tx as(unused), void* target as(unu
         current = next;
     }
 
-    atomic_store_explicit(&r->lkd_lock, 0u, memory_order_release);
+    release_lock(&r->free_lkd_lock);
     return true;
 }

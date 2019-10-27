@@ -86,7 +86,7 @@ void free_transaction(tx_t tx, shared_t shared) {
 
         // Free local segments. No need to lock, since this segment is not sync in the region
         if (current->segment->is_new) {
-            free(current->segment->versions_clocks);
+            free(current->segment->versions_locks);
             free(current->segment->start);
             free(current->segment);
         }

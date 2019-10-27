@@ -36,7 +36,8 @@ typedef struct _transaction {
 } transaction;
 
 typedef struct _region {
-    atomic_uint lkd_lock; // Lock on LinkedList of segment to ensure sync.
+    atomic_uint segments_lkd_lock; // Lock on LinkedList of segment to ensure sync.
+    atomic_uint free_lkd_lock; // Lock on free list of segment that needs to be free
     volatile size_t align;
     volatile size_t align_alloc;
     atomic_uint global_version_clock; // Global version clock of TL2 algorithm
