@@ -288,27 +288,47 @@ bool tm_end(shared_t shared as(unused), tx_t tx as(unused)) {
         return true;
     }
 
-    acquire_lock(&r->segments_lkd_lock);
-    acquire_lock(&r->free_lkd_lock);
+    bool segments_list_lock = false;
+    bool free_list_lock = false;
+    // Acquire the lock only if necessary, if no segment is added or removed, there is no need.
+    rw_set* current_set = txn->read_write_set;
+    while (current_set != NULL) {
+        if (current_set->segment->is_new && !current_set->to_remove) {
+            segments_list_lock = true;
+        } else if (current_set->to_remove && !current_set->segment->removed) {
+            segments_list_lock = true;
+            free_list_lock = true;
+            break;
+        }
+        current_set = current_set->next;
+    }
+
+    if (segments_list_lock)
+        acquire_lock(&r->segments_lkd_lock);
+
+    if (free_list_lock)
+        acquire_lock(&r->free_lkd_lock);
 
     // Validate the transaction
     bool is_valid_transaction = validate_transaction(r, txn);
     if (!is_valid_transaction) {
         free_txn(tx, shared);
-        release_lock(&r->segments_lkd_lock);
-        release_lock(&r->free_lkd_lock);
+        if (segments_list_lock)
+            release_lock(&r->segments_lkd_lock);
+        if (free_list_lock)
+            release_lock(&r->free_lkd_lock);
         return false;
     }
 
     // Write all the updates in shared memory and release the write locks
-    rw_set* current_set = txn->read_write_set;
+    current_set = txn->read_write_set;
     while (current_set != NULL) {
         writes_in_shared_memory(r, txn, current_set);
-        if (current_set->segment->is_new && current_set->to_remove == false) {
+        if (current_set->segment->is_new && !current_set->to_remove) {
             append_alloc_segment(current_set->segment, &r->first_segment);
             // Mark segment as old
             current_set->segment->is_new = false;
-        } else if (current_set->to_remove && current_set->segment->removed == false) {
+        } else if (current_set->to_remove && !current_set->segment->removed) {
             // Remove segment from region LinkedList and add it to 'to be free' list
             remove_alloc_segment(current_set->segment);
             // Mark segment as removed and set is_new to false just in case
@@ -324,8 +344,10 @@ bool tm_end(shared_t shared as(unused), tx_t tx as(unused)) {
         current_set = current_set->next;
     }
 
-    release_lock(&r->segments_lkd_lock);
-    release_lock(&r->free_lkd_lock);
+    if (segments_list_lock)
+        release_lock(&r->segments_lkd_lock);
+    if (free_list_lock)
+        release_lock(&r->free_lkd_lock);
 
     // Free the transaction and decrease ref_counts
     free_txn(tx, shared);
