@@ -17,7 +17,7 @@ typedef struct _segment {
     atomic_uint ref_count;
     volatile bool is_new;
     volatile bool removed; // Defines if segment is already removed from region LinkedList
-    atomic_uint* versions_locks; // Versions lock TL2
+    atomic_uint* versioned_locks; // Versioned locks in TL2
 } segment;
 
 typedef struct _rw_set {

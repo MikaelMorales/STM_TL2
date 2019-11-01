@@ -3,10 +3,8 @@
  * @author Morales Gonzalez Mikael <mikael.moralesgonzalez@epfl.ch>
 **/
 // External headers
-#define NDEBUG
 #include <stdlib.h>
 #include <stdio.h>
-#include <assert.h>
 
 // Internal headers
 #include "utils.h"
@@ -17,7 +15,6 @@ void safe_free(void* ptr) {
 }
 
 void remove_alloc_segment(struct _segment* s) {
-    assert(s != NULL);
     segment* prev = s->prev;
     segment* next = s->next;
     if (prev != NULL) {
@@ -41,13 +38,20 @@ void append_alloc_segment(struct _segment* s, struct _segment* base) {
     s->next = NULL;
 }
 
-size_t get_segment_index(shared_t shared, void const* source, segment* s) {
-    size_t alignment = tm_align(shared);
-    size_t start_index = (source - s->start) / alignment;
-    return start_index;
+void prepend_alloc_segment(struct _segment* s, struct _segment* base) {
+    s->next = base;
+    s->prev = NULL;
+    base->prev = s;
+    base = s;
 }
 
-size_t get_nb_items(size_t size, size_t alignment) {
+size_t get_segment_start_pos(shared_t shared, void const* source, segment* s) {
+    size_t align = tm_align(shared);
+    size_t start_pos = (source - s->start) / align;
+    return start_pos;
+}
+
+size_t get_length(size_t size, size_t alignment) {
     return size / alignment;
 }
 
@@ -64,29 +68,30 @@ size_t get_nb_segments_region(shared_t shared) {
     return count;
 }
 
-void free_transaction(tx_t tx, shared_t shared) {
+void free_txn(tx_t tx, shared_t shared) {
     transaction * txn = (transaction *) tx;
     rw_set* current = txn->read_write_set;
     while (current != NULL) {
         if (!txn->read_only) {
+            safe_free(current->was_read);
+
             size_t size = current->segment->size;
             size_t align = tm_align(shared);
-            size_t nb_items = get_nb_items(size, align);
-            for (size_t i=0; i < nb_items; i++) {
+            size_t len = get_length(size, align);
+            for (size_t i=0; i < len; i++) {
                 if(current->updated_value[i] != NULL) {
                     safe_free(current->updated_value[i]);
                 }
             }
-            safe_free(current->was_read);
             safe_free(current->updated_value);
 
         }
         // Decrease ref count of this segment
-        atomic_fetch_add(&current->segment->ref_count, -1);
+        atomic_fetch_add_explicit(&current->segment->ref_count, -1, memory_order_relaxed);
 
         // Free local segments. No need to lock, since this segment is not sync in the region
         if (current->segment->is_new) {
-            free(current->segment->versions_locks);
+            free(current->segment->versioned_locks);
             free(current->segment->start);
             free(current->segment);
         }
@@ -103,9 +108,9 @@ rw_set* get_rw_set(shared_t shared, void const* source, transaction* tx) {
     while (current != NULL) {
         if (source >= current->segment->start) {
             size_t size = current->segment->size;
-            size_t nb_items = get_nb_items(size, align);
+            size_t len = get_length(size, align);
             size_t index = (source - current->segment->start) / align;
-            if (index < nb_items) {
+            if (index < len) {
                 return current;
             }
         }
@@ -117,37 +122,32 @@ rw_set* get_rw_set(shared_t shared, void const* source, transaction* tx) {
 bool add_segment_to_txn(shared_t shared, transaction* txn, segment* s) {
     size_t align = tm_align(shared);
     rw_set* set = txn->read_write_set;
-    while(set->next != NULL) {
-        set = set->next;
-    }
 
     rw_set* new_set = malloc(sizeof(struct _rw_set));
     if (new_set == NULL) {
         return false;
     }
     // Fill new rw_set
-    set->next = new_set;
+    new_set->next = set;
+    txn->read_write_set = new_set;
     new_set->to_remove = false;
     new_set->segment = s;
-    new_set->next = NULL;
     if (!txn->read_only) {
-        size_t nb_items = get_nb_items(s->size, align);
-        new_set->updated_value = calloc(nb_items, sizeof(void *));
-        if (new_set->updated_value == NULL) {
-            safe_free(new_set);
-            set->next = NULL;
-            return false;
-        }
-        new_set->was_read = calloc(nb_items, sizeof(bool));
+        size_t len = get_length(s->size, align);
+        new_set->was_read = calloc(len, sizeof(bool));
         if (new_set->was_read == NULL) {
             safe_free(new_set->updated_value);
             safe_free(new_set);
-            set->next = NULL;
+            //set->next = NULL;
+            txn->read_write_set = set;
             return false;
         }
-        for (size_t item=0; item < nb_items; item++) {
-            new_set->was_read[item] = false;
-            new_set->updated_value[item] = NULL;
+        new_set->updated_value = calloc(len, sizeof(void *));
+        if (new_set->updated_value == NULL) {
+            safe_free(new_set);
+            txn->read_write_set = set;
+            //set->next = NULL;
+            return false;
         }
     }
     return true;

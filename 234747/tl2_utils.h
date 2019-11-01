@@ -9,8 +9,8 @@
 #include "stm_structures.h"
 
 bool is_locked(unsigned int lock);
-unsigned int extract_version(unsigned int lock);
-bool post_validate_read(transaction* tx, size_t index, size_t nb_items, const unsigned int* old_locks, const segment* s);
+unsigned int get_lock_version(unsigned int lock);
+bool post_validate_read(transaction* tx, size_t startPos, size_t len, const unsigned int* old_locks, const segment* s);
 bool check_read_set(region* r, transaction* tx, rw_set* set);
 bool validate_transaction(region* r, transaction* tx);
 void release_write_set_locks(rw_set* set, size_t n);

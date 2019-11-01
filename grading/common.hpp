@@ -220,7 +220,8 @@ static void short_pause() {
 /** Pause execution for a "longer" period of time.
 **/
 static void long_pause() {
-    ::std::this_thread::sleep_for(::std::chrono::milliseconds(200));
+    //::std::this_thread::sleep_for(::std::chrono::milliseconds(200));
+    short_pause(); // Actually, cannot do a long pause as it will
 }
 
 /** Run some function for some bounded time, throws 'Exception::BoundedOverrun' on overtime.
