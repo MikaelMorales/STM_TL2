@@ -99,7 +99,7 @@ static void release_lock(atomic_uint* lock) {
 }
 
 /**
- * Return the real alignement allocation of the region
+ * Return the real alignment allocation of the region
  */
 static inline size_t tm_align_alloc(struct _region * r) {
     return r->align_alloc;
