@@ -7,7 +7,9 @@ The *real* goal is of course to get you a hands-on experience with actual concur
 
 ## Layout of this repository
 
-* `grading/` Directory containing the evaluation binary, for faster local testing.
+* `grading/` Directory containing the evaluation binary, to test your solution on your own machine.
+
+   The evaluation machine (see below sections **Evaluation machine** and **Sending your code for measurement**) runs the exact same binary (possibly with a different _seed_ though).
 
    Section **How to write my own STM?** further details testing (and later submitting your code).
 
@@ -15,12 +17,12 @@ The *real* goal is of course to get you a hands-on experience with actual concur
 
 * `template/` Template (in C) of _your_ implementation, but you're free to replace everything and write C++.
 
-* `reference/` Reference, single lock-based implementation, that you have to "beat" to maximize your grade.
+* `reference/` Reference, single lock-based implementation.
 
-   Note that you are not allowed to write an implementation that is _equivalent_ to the reference.
+   Note that you are not allowed to write an implementation that is _equivalent_ to this reference implementation, i.e., that uses a single, global lock to serialize transactions.
    When in doubt, ask the TA right away for clarifications.
 
-* `playground/` As its name suggests, _playground_ is to play with the C(++)11 atomics. We'll be using it (only) during at the end of the second present, when we will be implementing a simple mutex.
+* `playground/` As its name suggests, _playground_ is to play with the C(++)11 atomics. We'll be using it on the second week only, when we will be implementing a simple mutex.
 
 
 ## What prior knowledge do I need?
@@ -96,7 +98,7 @@ You may read and inspire from existing STM libraries, but it must be **your own 
 
 1. Zip your modified (copy of the) `template` directory.
 
-2. Send your code for evaluation with the `submit.py` script. You can specify for which step your submission is.
+2. Send your code for evaluation with the `submit.py` script.
 ```
 usage: submit.py [-h] --uuid UUID [--host HOST] [--port PORT] [--force-update] [--download] zippath
 
@@ -406,3 +408,4 @@ Memory freeing in the given transaction.
 > **NB:** this function can be called concurrently, concurrent calls must be made with at least a different `shared` parameter or a different `tx` parameter.
 
 > **NB:** this function must not be called with `target` as the first allocated segment (the address returned by `tm_start`).
+
