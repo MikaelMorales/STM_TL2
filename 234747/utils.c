@@ -198,7 +198,6 @@ bool add_segment_to_txn(shared_t shared, transaction* txn, segment* s) {
         if (new_set->was_read == NULL) {
             safe_free(new_set->updated_value);
             safe_free(new_set);
-            //set->next = NULL;
             txn->read_write_set = set;
             return false;
         }
@@ -206,7 +205,6 @@ bool add_segment_to_txn(shared_t shared, transaction* txn, segment* s) {
         if (new_set->updated_value == NULL) {
             safe_free(new_set);
             txn->read_write_set = set;
-            //set->next = NULL;
             return false;
         }
     }
