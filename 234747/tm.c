@@ -309,9 +309,9 @@ bool tm_end(shared_t shared as(unused), tx_t tx as(unused)) {
     if (free_list_lock)
         acquire_lock(&r->free_lkd_lock);
 
-    // Validate the transaction
-    bool is_valid_transaction = validate_transaction(r, txn);
-    if (!is_valid_transaction) {
+    // Check if the transaction can be commited
+    bool is_valid = check_before_commit(r, txn);
+    if (!is_valid) {
         free_txn(tx, shared);
         if (segments_list_lock)
             release_lock(&r->segments_lkd_lock);
@@ -401,7 +401,7 @@ bool tm_read(shared_t shared as(unused), tx_t tx as(unused), void const* source 
     void* src_ptr = (void*)source;
     void* target_ptr = target;
     for (size_t i = start_pos; i < start_pos + len; i++) {
-        void* new_val = NULL;
+        void *new_val = NULL;
         if (!txn->read_only) {
             new_val = set->updated_value[i];
         }
@@ -411,24 +411,39 @@ bool tm_read(shared_t shared as(unused), tx_t tx as(unused), void const* source 
             memcpy(target_ptr, src_ptr, align);
         }
         // Add to read-set
-        if(!txn->read_only) {
+        if (!txn->read_only) {
             set->was_read[i] = true;
+        }
+
+        // Post validate this read according to the TL2 algorithm. It checks that the versioned lock are free and didn't
+        // change since the start of the tm_read.
+        unsigned int version_lock = atomic_load_explicit(&(set->segment->versioned_locks[i]), memory_order_acquire);
+        bool locked = is_locked(version_lock);
+        if (locked) {
+            return false;
+        }
+        unsigned int new_version = get_lock_version(version_lock);
+        if (new_version > txn->rv) {
+            if (old_locks != NULL) {
+                safe_free(old_locks);
+            }
+            free_txn(tx, shared);
+            return false;
+        }
+        if (old_locks != NULL) {
+            unsigned int prev_version = get_lock_version(old_locks[i - start_pos]);
+            if (new_version != prev_version) {
+                safe_free(old_locks);
+                free_txn(tx, shared);
+                return false;
+            }
         }
 
         src_ptr += align;
         target_ptr += align;
     }
 
-    // Post Validate the read to
-    bool validated = post_validate_read(txn, start_pos, len, old_locks, set->segment);
-    if (old_locks != NULL) {
-        safe_free(old_locks);
-    }
-    if (!validated) {
-        free_txn(tx, shared);
-        return false;
-    }
-
+    safe_free(old_locks);
     return true;
 }
 
