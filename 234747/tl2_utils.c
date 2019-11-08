@@ -148,7 +148,41 @@ unsigned int get_lock_version(unsigned int lock) {
 }
 
 /**
- * This function performs several steps of the TL2 algorithm (specifically step 3, 4, 5) when doing a write transaction
+ * Post validate a read transaction according to the TL2 algorithm.
+ * This function check that the versioned lock are free and didn't change since the start of a tm_read. Additionally, it
+ * also checks that the lock's version field is smaller or equal to the transaction rv.
+ * Otherwise, it suggest that the memory location has been modified and we should abort.
+ *
+ * @param tx The transaction
+ * @param startPos The first index in the segment to validate
+ * @param len The number of elements in the segment to check starting at startPos
+ * @param old_locks The previous locks values seen at the beginning of tm_read.
+ * @param s The segment
+ * @return True if valid else False
+ */
+bool post_validate_read(transaction* tx, size_t startPos, size_t len, const unsigned int* old_locks, const segment* s) {
+    for (size_t i = 0; i < len; i++) {
+        unsigned int version_lock = atomic_load_explicit(&(s->versioned_locks[i + startPos]), memory_order_acquire);
+        bool locked = is_locked(version_lock);
+        if (locked) {
+            return false;
+        }
+        unsigned int new_version = get_lock_version(version_lock);
+        if (new_version > tx->rv) {
+            return false;
+        }
+        if (old_locks != NULL) {
+            unsigned int prev_version = get_lock_version(old_locks[i]);
+            if (new_version != prev_version) {
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
+/**
+ * This function performs several steps of the TL2 algorithm (specifically step 3, 4, 5)w hen doing a write transaction
  * to ensure that the given transaction is valid and can be commited.
  * This function will acquire all the lock of the write-sets of the segments needed, then it increments the global
  * version clock and assign it to txn->wv variable and finally validate the read-set.
@@ -156,7 +190,7 @@ unsigned int get_lock_version(unsigned int lock) {
  * @param txn The transaction
  * @return True if valid else False
  */
-bool check_before_commit(region* r, transaction* txn) {
+bool validate_transaction(region* r, transaction* txn) {
     // Lock the write-sets
     rw_set* current_set = txn->read_write_set;
     while (current_set != NULL) {

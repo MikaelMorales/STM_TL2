@@ -12,5 +12,6 @@
 
 bool is_locked(unsigned int lock);
 unsigned int get_lock_version(unsigned int lock);
-bool check_before_commit(region* r, transaction* tx);
+bool post_validate_read(transaction* tx, size_t startPos, size_t len, const unsigned int* old_locks, const segment* s);
+bool validate_transaction(region* r, transaction* tx);
 void writes_in_shared_memory(region* r, transaction* tx, rw_set* set);
