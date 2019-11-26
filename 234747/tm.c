@@ -110,8 +110,8 @@ static inline size_t tm_align_alloc(struct _region * r) {
  * @return true if it succeeded else false
  */
 static bool fill_segment(struct _region* r, struct _segment* s, size_t size) {
+    atomic_init(&s->ref_count, 0u);
     s->size = size;
-    s->ref_count = 0;
     s->removed = false;
     s->is_new = true;
     const size_t align_alloc = tm_align_alloc(r);
