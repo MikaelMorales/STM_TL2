@@ -1,6 +1,6 @@
 # CS-453 - Course project
 
-Your goal is to implement a Software Transactional Memory (STM).
+Software Transactional Memory (STM) based on Transactional Locking II.
 
 ### Useful resources
 
