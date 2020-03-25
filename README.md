@@ -1,6 +1,6 @@
 # CS-453 - Course project
 
-Software Transactional Memory (STM) based on Transactional Locking II achieving a **speedup of ~ 1.40**
+Software Transactional Memory (STM) based on **Transactional Locking II** achieving a **speedup of ~ 1.40**
 
 ### Useful resources
 
